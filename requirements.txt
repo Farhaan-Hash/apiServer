@@ -1,8 +1,9 @@
 fastapi
 uvicorn
 torch
-torchvision
-pillow
+timm
 albumentations
-scikit-learn
-python-multipart
+opencv-python-headless
+pillow
+numpy
+
