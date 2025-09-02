@@ -1,25 +1,52 @@
+import io
 import torch
-from fastapi import FastAPI, UploadFile, File
+import timm
+import uvicorn
+import json
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
 from PIL import Image
-import io, json
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
 import numpy as np
 
-# --- Load model + class map ---
-MODEL_PATH = "model_best.pt"
-CLASS_MAP_JSON = "class_to_idx.json"
+# -----------------------------
+# Config
+# -----------------------------
+MODEL_NAME = "resnet18"     # 🔴 change to your trained model name
+NUM_CLASSES = 5             # 🔴 change to number of classes in your dataset
+IMG_SIZE = 256              # must match training
+CHECKPOINT_PATH = "model_best.pt"
+CLASS_MAP_PATH = "class_to_idx.json"
 
-with open(CLASS_MAP_JSON, "r") as f:
-    class_to_idx = json.load(f)
+# -----------------------------
+# Load class map
+# -----------------------------
+with open(CLASS_MAP_PATH, "r") as fh:
+    class_to_idx = json.load(fh)
+
 idx_to_class = {v: k for k, v in class_to_idx.items()}
 
-model = torch.load(MODEL_PATH, map_location="cpu")
+# -----------------------------
+# Build Model
+# -----------------------------
+model = timm.create_model(MODEL_NAME, pretrained=False, num_classes=NUM_CLASSES)
+
+checkpoint = torch.load(CHECKPOINT_PATH, map_location="cpu")
+
+if "model_state_dict" in checkpoint:
+    model.load_state_dict(checkpoint["model_state_dict"])
+elif "state_dict" in checkpoint:
+    model.load_state_dict(checkpoint["state_dict"])
+else:
+    model.load_state_dict(checkpoint)
+
 model.eval()
 
-# --- Albumentations transforms ---
-IMG_SIZE = 256
+# -----------------------------
+# Albumentations transform
+# -----------------------------
 val_tfms = A.Compose([
     A.LongestMaxSize(max_size=IMG_SIZE),
     A.PadIfNeeded(IMG_SIZE, IMG_SIZE, border_mode=cv2.BORDER_REFLECT_101),
@@ -28,26 +55,45 @@ val_tfms = A.Compose([
     ToTensorV2(),
 ])
 
+# -----------------------------
+# FastAPI app
+# -----------------------------
 app = FastAPI()
-
-def preprocess(img: Image.Image):
-    img = np.array(img.convert("RGB"))
-    transformed = val_tfms(image=img)["image"]
-    return transformed.unsqueeze(0)
 
 @app.get("/")
 def home():
-    return {"status": "Plant Disease API running 🚀"}
+    return {"message": "Plant Disease Model API is running 🚀"}
 
-@app.post("/predict")
+@app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
-    image_bytes = await file.read()
-    img = Image.open(io.BytesIO(image_bytes))
+    try:
+        # read image
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        image = np.array(image)
 
-    x = preprocess(img)
-    with torch.no_grad():
-        outputs = model(x)
-        _, pred = torch.max(outputs, 1)
-    label = idx_to_class[pred.item()]
+        # apply transforms
+        transformed = val_tfms(image=image)
+        tensor = transformed["image"].unsqueeze(0)  # add batch dim
 
-    return {"prediction": label}
+        # prediction
+        with torch.no_grad():
+            outputs = model(tensor)
+            probs = torch.softmax(outputs, dim=1)[0]
+            pred_idx = torch.argmax(probs).item()
+            pred_class = idx_to_class[pred_idx]
+            confidence = probs[pred_idx].item()
+
+        return JSONResponse({
+            "class": pred_class,
+            "confidence": round(confidence, 4)
+        })
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)})
+
+# -----------------------------
+# Run locally (Render will use Start Command)
+# -----------------------------
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
