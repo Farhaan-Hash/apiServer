@@ -5,10 +5,10 @@ wheel
 
 fastapi
 uvicorn[standard]
-torch
-torchvision
-timm
-albumentations
+torch>=2.5.0
+torchvision>=0.21.0
+timm>=1.0.9
+albumentations>=1.4.20
 opencv-python-headless
 pillow
 numpy
