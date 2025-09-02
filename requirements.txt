@@ -1,17 +1,17 @@
 
-pip==25.2
-setuptools>=70.0
+pip
+setuptools
 wheel
 
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-torch==2.5.1
-torchvision==0.21.0
-timm==1.0.9
-albumentations==1.4.14
-opencv-python-headless==4.10.0.84
-pillow==10.4.0
-numpy==1.26.4
+fastapi
+uvicorn[standard]
+torch
+torchvision
+timm
+albumentations
+opencv-python-headless
+pillow
+numpy
 
 
 
