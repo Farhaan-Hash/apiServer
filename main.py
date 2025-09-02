@@ -1,31 +1,24 @@
 import torch
-import torch.nn as nn
-import timm
-import json
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
 from PIL import Image
-import io
+import io, json
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
 import numpy as np
 
-app = FastAPI()
+# --- Load model + class map ---
+MODEL_PATH = "model_best.pt"
+CLASS_MAP_JSON = "class_to_idx.json"
 
-# ---- Load class map ----
-with open("class_to_idx.json", "r") as f:
+with open(CLASS_MAP_JSON, "r") as f:
     class_to_idx = json.load(f)
 idx_to_class = {v: k for k, v in class_to_idx.items()}
 
-# ---- Load model ----
-device = "cpu"
-model = timm.create_model("resnet18", pretrained=False, num_classes=len(class_to_idx))
-checkpoint = torch.load("model_best.pt", map_location=device)
-model.load_state_dict(checkpoint)
+model = torch.load(MODEL_PATH, map_location="cpu")
 model.eval()
 
-# ---- Transforms ----
+# --- Albumentations transforms ---
 IMG_SIZE = 256
 val_tfms = A.Compose([
     A.LongestMaxSize(max_size=IMG_SIZE),
@@ -35,16 +28,26 @@ val_tfms = A.Compose([
     ToTensorV2(),
 ])
 
+app = FastAPI()
+
+def preprocess(img: Image.Image):
+    img = np.array(img.convert("RGB"))
+    transformed = val_tfms(image=img)["image"]
+    return transformed.unsqueeze(0)
+
+@app.get("/")
+def home():
+    return {"status": "Plant Disease API running 🚀"}
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    contents = await file.read()
-    image = Image.open(io.BytesIO(contents)).convert("RGB")
-    img = np.array(image)
-    img = val_tfms(image=img)["image"].unsqueeze(0)
+    image_bytes = await file.read()
+    img = Image.open(io.BytesIO(image_bytes))
 
+    x = preprocess(img)
     with torch.no_grad():
-        outputs = model(img)
-        _, preds = torch.max(outputs, 1)
-        predicted_class = idx_to_class[preds.item()]
+        outputs = model(x)
+        _, pred = torch.max(outputs, 1)
+    label = idx_to_class[pred.item()]
 
-    return JSONResponse({"prediction": predicted_class})
+    return {"prediction": label}
